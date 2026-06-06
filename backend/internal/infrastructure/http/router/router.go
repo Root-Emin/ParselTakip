@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -118,8 +119,12 @@ func New(deps Dependencies) *chi.Mux {
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Public auth routes (no JWT required)
+		// Public auth routes (no JWT required). Rate-limited per client IP to
+		// slow brute-force/credential-stuffing (defense in depth alongside the
+		// per-account login lockout). KVKK Art. 12 technical measures.
 		r.Route("/auth", func(r chi.Router) {
+			authLimiter := middleware.NewRateLimiter(10, time.Minute)
+			r.Use(authLimiter.Middleware)
 			if deps.IAMHandler != nil {
 				r.Post("/register", deps.IAMHandler.Register)
 				r.Post("/login", deps.IAMHandler.Login)
@@ -147,6 +152,13 @@ func New(deps Dependencies) *chi.Mux {
 			// User routes
 			if deps.IAMHandler != nil {
 				r.Get("/me", deps.IAMHandler.GetMe)
+
+				// KVKK data-subject rights (self-service): access/export, consent
+				// and erasure (anonymization). Scoped to the authenticated user.
+				r.Get("/me/kvkk/export", deps.IAMHandler.ExportMyData)
+				r.Post("/me/kvkk/consent", deps.IAMHandler.RecordConsent)
+				r.Delete("/me/kvkk/erase", deps.IAMHandler.EraseMyData)
+
 				r.Route("/users", func(r chi.Router) {
 					r.Get("/", deps.IAMHandler.ListUsers)
 					r.Get("/{id}", deps.IAMHandler.GetUser)
@@ -335,11 +347,21 @@ func New(deps Dependencies) *chi.Mux {
 						deps.DocumentHandler.List, deps.DocumentHandler.Create,
 						deps.DocumentHandler.Get, deps.DocumentHandler.Update, deps.DocumentHandler.Delete)
 					if deps.RBACService != nil {
+						// Object-storage backed upload/download (MinIO)
+						r.With(middleware.RequirePermission(deps.RBACService, "document.create")).
+							Post("/upload", deps.DocumentHandler.Upload)
+						r.With(middleware.RequirePermission(deps.RBACService, "document.create")).
+							Post("/presign-upload", deps.DocumentHandler.PresignUpload)
+						r.With(middleware.RequirePermission(deps.RBACService, "document.read")).
+							Get("/{documentId}/download", deps.DocumentHandler.Download)
 						r.With(middleware.RequirePermission(deps.RBACService, "document.review")).
 							Post("/{documentId}/reviews", deps.DocumentHandler.Review)
 						r.With(middleware.RequirePermission(deps.RBACService, "document.read")).
 							Get("/{documentId}/reviews", deps.DocumentHandler.ListReviews)
 					} else {
+						r.Post("/upload", deps.DocumentHandler.Upload)
+						r.Post("/presign-upload", deps.DocumentHandler.PresignUpload)
+						r.Get("/{documentId}/download", deps.DocumentHandler.Download)
 						r.Post("/{documentId}/reviews", deps.DocumentHandler.Review)
 						r.Get("/{documentId}/reviews", deps.DocumentHandler.ListReviews)
 					}

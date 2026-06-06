@@ -20,19 +20,8 @@ func NewManageUsersUseCase(userRepo repository.UserRepository) *ManageUsersUseCa
 	return &ManageUsersUseCase{userRepo: userRepo}
 }
 
-func toUserInfo(u *model.User) *dto.UserInfo {
-	return &dto.UserInfo{
-		ID:        u.ID,
-		Email:     u.Email,
-		FirstName: u.FirstName,
-		LastName:  u.LastName,
-		Status:    string(u.Status),
-		CreatedAt: u.CreatedAt,
-	}
-}
-
-// Update applies a partial update to a user (name and/or status).
-func (uc *ManageUsersUseCase) Update(ctx context.Context, id uuid.UUID, req dto.UpdateUserRequest) (*dto.UserInfo, error) {
+// Update applies a partial update to a user (profile, type and/or status).
+func (uc *ManageUsersUseCase) Update(ctx context.Context, id uuid.UUID, req dto.UpdateUserRequest) (*dto.AdminUserResponse, error) {
 	user, err := uc.userRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -42,6 +31,25 @@ func (uc *ManageUsersUseCase) Update(ctx context.Context, id uuid.UUID, req dto.
 	}
 	if req.LastName != "" {
 		user.LastName = req.LastName
+	}
+	if req.Phone != "" {
+		user.Phone = req.Phone
+	}
+	if req.Address != "" {
+		user.Address = req.Address
+	}
+	if req.City != "" {
+		user.City = req.City
+	}
+	if req.District != "" {
+		user.District = req.District
+	}
+	if req.UserType != "" {
+		ut := model.UserType(req.UserType)
+		if !model.IsValidUserType(ut) {
+			return nil, domainErr.New(domainErr.ErrValidation, "invalid user type", nil)
+		}
+		user.UserType = ut
 	}
 	if req.Status != "" {
 		status := model.UserStatus(req.Status)
@@ -55,11 +63,11 @@ func (uc *ManageUsersUseCase) Update(ctx context.Context, id uuid.UUID, req dto.
 	if err := uc.userRepo.Update(ctx, user); err != nil {
 		return nil, err
 	}
-	return toUserInfo(user), nil
+	return dto.ToAdminUserResponse(user), nil
 }
 
 // SetStatus activates, deactivates or suspends a user.
-func (uc *ManageUsersUseCase) SetStatus(ctx context.Context, id uuid.UUID, status model.UserStatus) (*dto.UserInfo, error) {
+func (uc *ManageUsersUseCase) SetStatus(ctx context.Context, id uuid.UUID, status model.UserStatus) (*dto.AdminUserResponse, error) {
 	switch status {
 	case model.UserStatusActive, model.UserStatusInactive, model.UserStatusSuspended:
 	default:
@@ -73,5 +81,5 @@ func (uc *ManageUsersUseCase) SetStatus(ctx context.Context, id uuid.UUID, statu
 	if err := uc.userRepo.Update(ctx, user); err != nil {
 		return nil, err
 	}
-	return toUserInfo(user), nil
+	return dto.ToAdminUserResponse(user), nil
 }

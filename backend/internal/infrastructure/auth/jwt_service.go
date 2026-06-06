@@ -18,14 +18,21 @@ type JWTService struct {
 	secret     []byte
 	expiration time.Duration
 	issuer     string
+	bcryptCost int
 }
 
-// NewJWTService creates a new JWTService from config.
-func NewJWTService(cfg config.JWTConfig) *JWTService {
+// NewJWTService creates a new JWTService from config. The bcryptCost controls
+// the password hashing work factor; values outside the bcrypt-supported range
+// fall back to bcrypt.DefaultCost.
+func NewJWTService(cfg config.JWTConfig, bcryptCost int) *JWTService {
+	if bcryptCost < bcrypt.MinCost || bcryptCost > bcrypt.MaxCost {
+		bcryptCost = bcrypt.DefaultCost
+	}
 	return &JWTService{
 		secret:     []byte(cfg.Secret),
 		expiration: time.Duration(cfg.ExpirationHours) * time.Hour,
 		issuer:     cfg.Issuer,
+		bcryptCost: bcryptCost,
 	}
 }
 
@@ -40,7 +47,7 @@ type customClaims struct {
 }
 
 func (s *JWTService) HashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), s.bcryptCost)
 	if err != nil {
 		return "", fmt.Errorf("hash password: %w", err)
 	}

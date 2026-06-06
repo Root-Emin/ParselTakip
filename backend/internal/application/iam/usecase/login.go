@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/masterfabric-go/masterfabric/internal/application/iam/dto"
@@ -13,13 +14,15 @@ import (
 
 // LoginUseCase handles user authentication.
 type LoginUseCase struct {
-	userRepo       repository.UserRepository
-	orgUserRepo    repository.OrgUserRepository
-	roleRepo       repository.RoleRepository
-	rbac           service.RBACService
-	auth           service.AuthService
-	ensureOrgRoles *EnsureOrgRolesUseCase
-	tokenTTLHours  int
+	userRepo         repository.UserRepository
+	orgUserRepo      repository.OrgUserRepository
+	roleRepo         repository.RoleRepository
+	rbac             service.RBACService
+	auth             service.AuthService
+	ensureOrgRoles   *EnsureOrgRolesUseCase
+	tokenTTLHours    int
+	maxLoginAttempts int
+	lockoutDuration  time.Duration
 }
 
 // NewLoginUseCase creates a new LoginUseCase.
@@ -31,15 +34,22 @@ func NewLoginUseCase(
 	auth service.AuthService,
 	ensureOrgRoles *EnsureOrgRolesUseCase,
 	tokenTTLHours int,
+	maxLoginAttempts int,
+	lockoutDuration time.Duration,
 ) *LoginUseCase {
+	if maxLoginAttempts <= 0 {
+		maxLoginAttempts = 5
+	}
 	return &LoginUseCase{
-		userRepo:       userRepo,
-		orgUserRepo:    orgUserRepo,
-		roleRepo:       roleRepo,
-		rbac:           rbac,
-		auth:           auth,
-		ensureOrgRoles: ensureOrgRoles,
-		tokenTTLHours:  tokenTTLHours,
+		userRepo:         userRepo,
+		orgUserRepo:      orgUserRepo,
+		roleRepo:         roleRepo,
+		rbac:             rbac,
+		auth:             auth,
+		ensureOrgRoles:   ensureOrgRoles,
+		tokenTTLHours:    tokenTTLHours,
+		maxLoginAttempts: maxLoginAttempts,
+		lockoutDuration:  lockoutDuration,
 	}
 }
 
@@ -54,9 +64,18 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req dto.LoginRequest) (*dto
 		return nil, domainErr.New(domainErr.ErrForbidden, "account is not active", nil)
 	}
 
-	if err := uc.auth.VerifyPassword(user.PasswordHash, req.Password); err != nil {
-		return nil, err
+	// Brute-force protection: reject while the account is locked.
+	if user.IsLocked() {
+		return nil, domainErr.New(domainErr.ErrForbidden, "account temporarily locked due to failed login attempts", nil)
 	}
+
+	if err := uc.auth.VerifyPassword(user.PasswordHash, req.Password); err != nil {
+		_ = uc.userRepo.RecordLoginFailure(ctx, user.ID, uc.maxLoginAttempts, uc.lockoutDuration)
+		return nil, domainErr.New(domainErr.ErrUnauthorized, "invalid credentials", nil)
+	}
+
+	// Successful password verification resets the failed-login counter.
+	_ = uc.userRepo.RecordLoginSuccess(ctx, user.ID)
 
 	claims := service.TokenClaims{
 		UserID: user.ID,
@@ -111,6 +130,10 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req dto.LoginRequest) (*dto
 			FirstName: user.FirstName,
 			LastName:  user.LastName,
 			Status:    string(user.Status),
+			UserType:  string(user.UserType),
+			Phone:     user.Phone,
+			City:      user.City,
+			District:  user.District,
 			CreatedAt: user.CreatedAt,
 		},
 		OrganizationID: organizationID,

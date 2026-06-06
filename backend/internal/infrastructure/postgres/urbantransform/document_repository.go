@@ -18,7 +18,9 @@ import (
 var _ repository.DocumentRepository = (*DocumentRepo)(nil)
 
 const documentColumns = `id, organization_id, app_id, project_id, document_type_id, building_id, unit_id, owner_id,
-	file_name, file_path, file_size, COALESCE(mime_type, '') AS mime_type, status, is_notarized,
+	file_name, file_path, file_size, COALESCE(mime_type, '') AS mime_type,
+	COALESCE(storage_bucket, '') AS storage_bucket, COALESCE(storage_key, '') AS storage_key, COALESCE(checksum, '') AS checksum,
+	status, is_notarized,
 	notary_date, expiry_date, uploaded_by, COALESCE(uploaded_by_role, '') AS uploaded_by_role,
 	version, metadata, created_at, updated_at`
 
@@ -36,7 +38,9 @@ func scanDocument(row pgx.Row) (*model.Document, error) {
 	var d model.Document
 	err := row.Scan(
 		&d.ID, &d.OrganizationID, &d.AppID, &d.ProjectID, &d.DocumentTypeID, &d.BuildingID, &d.UnitID, &d.OwnerID,
-		&d.FileName, &d.FilePath, &d.FileSize, &d.MimeType, &d.Status, &d.IsNotarized,
+		&d.FileName, &d.FilePath, &d.FileSize, &d.MimeType,
+		&d.StorageBucket, &d.StorageKey, &d.Checksum,
+		&d.Status, &d.IsNotarized,
 		&d.NotaryDate, &d.ExpiryDate, &d.UploadedBy, &d.UploadedByRole,
 		&d.Version, &d.Metadata, &d.CreatedAt, &d.UpdatedAt,
 	)
@@ -64,19 +68,28 @@ func (r *DocumentRepo) Create(ctx context.Context, d *model.Document) error {
 	query := `
 		INSERT INTO documents (
 			id, organization_id, app_id, project_id, document_type_id, building_id, unit_id, owner_id,
-			file_name, file_path, file_size, mime_type, status, is_notarized,
+			file_name, file_path, file_size, mime_type, storage_bucket, storage_key, checksum, status, is_notarized,
 			notary_date, expiry_date, uploaded_by, uploaded_by_role, version, metadata, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`
 
 	_, err := r.db.Exec(ctx, query,
 		d.ID, d.OrganizationID, d.AppID, d.ProjectID, d.DocumentTypeID, d.BuildingID, d.UnitID, d.OwnerID,
-		d.FileName, d.FilePath, d.FileSize, d.MimeType, d.Status, d.IsNotarized,
+		d.FileName, d.FilePath, d.FileSize, d.MimeType, nullableStr(d.StorageBucket), nullableStr(d.StorageKey), nullableStr(d.Checksum),
+		d.Status, d.IsNotarized,
 		d.NotaryDate, d.ExpiryDate, d.UploadedBy, d.UploadedByRole, d.Version, d.Metadata, d.CreatedAt, d.UpdatedAt,
 	)
 	if err != nil {
 		return domainErr.New(domainErr.ErrInternal, "failed to create document", err)
 	}
 	return nil
+}
+
+// nullableStr converts an empty string to a SQL NULL for optional text columns.
+func nullableStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // GetByID retrieves a document by ID scoped to the tenant.
@@ -99,13 +112,15 @@ func (r *DocumentRepo) Update(ctx context.Context, d *model.Document) error {
 	query := `
 		UPDATE documents SET
 			file_name = $4, file_path = $5, file_size = $6, mime_type = $7, status = $8,
-			is_notarized = $9, notary_date = $10, expiry_date = $11, version = $12, metadata = $13, updated_at = $14
+			is_notarized = $9, notary_date = $10, expiry_date = $11, version = $12, metadata = $13,
+			storage_bucket = $14, storage_key = $15, checksum = $16, updated_at = $17
 		WHERE id = $1 AND organization_id = $2 AND app_id = $3`
 
 	ct, err := r.db.Exec(ctx, query,
 		d.ID, d.OrganizationID, d.AppID,
 		d.FileName, d.FilePath, d.FileSize, d.MimeType, d.Status,
-		d.IsNotarized, d.NotaryDate, d.ExpiryDate, d.Version, d.Metadata, d.UpdatedAt,
+		d.IsNotarized, d.NotaryDate, d.ExpiryDate, d.Version, d.Metadata,
+		nullableStr(d.StorageBucket), nullableStr(d.StorageKey), nullableStr(d.Checksum), d.UpdatedAt,
 	)
 	if err != nil {
 		return domainErr.New(domainErr.ErrInternal, "failed to update document", err)

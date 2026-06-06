@@ -32,3 +32,16 @@ func parseUUIDQuery(r *http.Request, key string) *uuid.UUID {
 	}
 	return &id
 }
+
+// parseUUIDForm parses a UUID multipart/form value, returning nil when absent or invalid.
+func parseUUIDForm(r *http.Request, key string) *uuid.UUID {
+	val := r.FormValue(key)
+	if val == "" {
+		return nil
+	}
+	id, err := uuid.Parse(val)
+	if err != nil {
+		return nil
+	}
+	return &id
+}

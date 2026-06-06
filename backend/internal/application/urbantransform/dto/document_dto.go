@@ -19,10 +19,34 @@ type CreateDocumentRequest struct {
 	FilePath       string          `json:"file_path" validate:"required"`
 	FileSize       *int64          `json:"file_size,omitempty"`
 	MimeType       string          `json:"mime_type"`
+	StorageBucket  string          `json:"storage_bucket,omitempty"`
+	StorageKey     string          `json:"storage_key,omitempty"`
+	Checksum       string          `json:"checksum,omitempty"`
 	IsNotarized    bool            `json:"is_notarized"`
 	NotaryDate     *time.Time      `json:"notary_date,omitempty"`
 	ExpiryDate     *time.Time      `json:"expiry_date,omitempty"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
+}
+
+// PresignUploadRequest asks the server for a short-lived URL to upload a file
+// directly to object storage; the client then registers metadata via Create.
+type PresignUploadRequest struct {
+	ProjectID uuid.UUID `json:"project_id" validate:"required"`
+	FileName  string    `json:"file_name" validate:"required"`
+}
+
+// PresignUploadResponse returns the presigned PUT URL and the storage key to use.
+type PresignUploadResponse struct {
+	UploadURL     string `json:"upload_url"`
+	StorageBucket string `json:"storage_bucket"`
+	StorageKey    string `json:"storage_key"`
+	ExpiresIn     int    `json:"expires_in_seconds"`
+}
+
+// DownloadResponse returns a short-lived presigned URL to fetch a document.
+type DownloadResponse struct {
+	URL       string `json:"url"`
+	ExpiresIn int    `json:"expires_in_seconds"`
 }
 
 // UpdateDocumentRequest is the input for updating a document (partial command).
@@ -73,6 +97,8 @@ type DocumentResponse struct {
 	FilePath       string          `json:"file_path"`
 	FileSize       *int64          `json:"file_size,omitempty"`
 	MimeType       string          `json:"mime_type"`
+	StorageKey     string          `json:"storage_key,omitempty"`
+	Checksum       string          `json:"checksum,omitempty"`
 	Status         string          `json:"status"`
 	IsNotarized    bool            `json:"is_notarized"`
 	NotaryDate     *time.Time      `json:"notary_date,omitempty"`
@@ -125,6 +151,8 @@ func ToDocumentResponse(d *model.Document) DocumentResponse {
 		FilePath:       d.FilePath,
 		FileSize:       d.FileSize,
 		MimeType:       d.MimeType,
+		StorageKey:     d.StorageKey,
+		Checksum:       d.Checksum,
 		Status:         string(d.Status),
 		IsNotarized:    d.IsNotarized,
 		NotaryDate:     d.NotaryDate,

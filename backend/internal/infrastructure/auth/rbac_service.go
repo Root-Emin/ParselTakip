@@ -13,6 +13,14 @@ import (
 
 const permissionCacheTTL = 15 * time.Minute
 
+// roleSystemAdmin holds full access; its permissions are augmented with the
+// wildcard so it is authorized for every action without enumerating each grant.
+const roleSystemAdmin = "system_admin"
+
+// permissionWildcard, when present in a user's effective permissions, authorizes
+// any requested permission (super-admin).
+const permissionWildcard = "*"
+
 // RBACServiceImpl implements service.RBACService with Redis caching.
 type RBACServiceImpl struct {
 	roleRepo repository.RoleRepository
@@ -46,6 +54,17 @@ func (s *RBACServiceImpl) GetUserPermissions(ctx context.Context, userID, orgID 
 		return nil, err
 	}
 
+	// Super-admin (system_admin role) is granted a wildcard so it is authorized
+	// for every endpoint regardless of the granular permission catalog.
+	if roles, rerr := s.roleRepo.GetUserRoleNames(ctx, userID, orgID); rerr == nil {
+		for _, r := range roles {
+			if r == roleSystemAdmin {
+				perms = append(perms, permissionWildcard)
+				break
+			}
+		}
+	}
+
 	// Cache result
 	if s.redis != nil && len(perms) > 0 {
 		data, _ := json.Marshal(perms)
@@ -61,7 +80,7 @@ func (s *RBACServiceImpl) HasPermission(ctx context.Context, userID, orgID uuid.
 		return false, err
 	}
 	for _, p := range perms {
-		if p == permission {
+		if p == permission || p == permissionWildcard {
 			return true, nil
 		}
 	}
@@ -76,6 +95,9 @@ func (s *RBACServiceImpl) HasAnyPermission(ctx context.Context, userID, orgID uu
 	permSet := make(map[string]struct{}, len(perms))
 	for _, p := range perms {
 		permSet[p] = struct{}{}
+	}
+	if _, ok := permSet[permissionWildcard]; ok {
+		return true, nil
 	}
 	for _, required := range permissions {
 		if _, ok := permSet[required]; ok {

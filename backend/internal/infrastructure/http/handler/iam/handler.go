@@ -1,7 +1,10 @@
 package iam
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -12,6 +15,7 @@ import (
 	"github.com/masterfabric-go/masterfabric/internal/shared/response"
 	"github.com/masterfabric-go/masterfabric/internal/shared/validator"
 
+	"github.com/masterfabric-go/masterfabric/internal/domain/iam/model"
 	iamRepo "github.com/masterfabric-go/masterfabric/internal/domain/iam/repository"
 )
 
@@ -119,11 +123,98 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 			FirstName: user.FirstName,
 			LastName:  user.LastName,
 			Status:    string(user.Status),
+			UserType:  string(user.UserType),
+			Phone:     user.Phone,
+			City:      user.City,
+			District:  user.District,
 			CreatedAt: user.CreatedAt,
 		},
 		OrganizationID: orgID,
 		Roles:          roles,
 		Permissions:    permissions,
+	})
+}
+
+// ExportMyData handles GET /me/kvkk/export and returns the authenticated user's
+// own personal data (KVKK right of access). PII is returned UNMASKED because the
+// requester is the data owner. The access is audit-logged.
+func (h *Handler) ExportMyData(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		response.JSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		return
+	}
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	slog.Info("kvkk pii access", "action", "export", "user_id", userID.String())
+	response.JSON(w, http.StatusOK, dto.ToKVKKExportResponse(user))
+}
+
+// RecordConsent handles POST /me/kvkk/consent and stamps the user's KVKK
+// consent (açık rıza) with the policy version they accepted.
+func (h *Handler) RecordConsent(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		response.JSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		return
+	}
+	var req dto.KVKKConsentRequest
+	if err := validator.DecodeAndValidate(r, &req); err != nil {
+		response.JSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	now := time.Now().UTC()
+	user.KVKKConsentAt = &now
+	user.KVKKConsentVersion = req.Version
+	if err := h.userRepo.Update(r.Context(), user); err != nil {
+		response.Error(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, dto.KVKKConsentResponse{
+		Message:   "consent recorded",
+		Version:   req.Version,
+		ConsentAt: now,
+	})
+}
+
+// EraseMyData handles DELETE /me/kvkk/erase and anonymizes the data subject's
+// PII (KVKK right to erasure / unutulma hakkı) while retaining the row for audit
+// and referential integrity. The account is deactivated.
+func (h *Handler) EraseMyData(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		response.JSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		return
+	}
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	user.Email = fmt.Sprintf("deleted-%s@anonymized.local", user.ID)
+	user.FirstName = "Silinmis"
+	user.LastName = "Kullanici"
+	user.Phone = ""
+	user.NationalID = ""
+	user.Address = ""
+	user.City = ""
+	user.District = ""
+	user.Status = model.UserStatusInactive
+	if err := h.userRepo.Update(r.Context(), user); err != nil {
+		response.Error(w, err)
+		return
+	}
+	slog.Info("kvkk pii access", "action", "erase", "user_id", userID.String())
+	response.JSON(w, http.StatusOK, map[string]string{
+		"message": "personal data anonymized and account deactivated",
 	})
 }
 
@@ -142,14 +233,7 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSON(w, http.StatusOK, dto.UserInfo{
-		ID:        user.ID,
-		Email:     user.Email,
-		FirstName: user.FirstName,
-		LastName:  user.LastName,
-		Status:    string(user.Status),
-		CreatedAt: user.CreatedAt,
-	})
+	response.JSON(w, http.StatusOK, dto.ToAdminUserResponse(user))
 }
 
 // ListUsers returns a paginated list of users.
@@ -162,16 +246,9 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var infos []dto.UserInfo
+	infos := make([]*dto.AdminUserResponse, 0, len(users))
 	for _, u := range users {
-		infos = append(infos, dto.UserInfo{
-			ID:        u.ID,
-			Email:     u.Email,
-			FirstName: u.FirstName,
-			LastName:  u.LastName,
-			Status:    string(u.Status),
-			CreatedAt: u.CreatedAt,
-		})
+		infos = append(infos, dto.ToAdminUserResponse(u))
 	}
 
 	response.JSON(w, http.StatusOK, pagination.NewResult(infos, params, total))

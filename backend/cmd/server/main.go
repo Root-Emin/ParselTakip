@@ -29,6 +29,11 @@ import (
 	pgTenant "github.com/masterfabric-go/masterfabric/internal/infrastructure/postgres/tenant"
 	pgUrban "github.com/masterfabric-go/masterfabric/internal/infrastructure/postgres/urbantransform"
 	urbanHandler "github.com/masterfabric-go/masterfabric/internal/infrastructure/http/handler/urbantransform"
+	infraStorage "github.com/masterfabric-go/masterfabric/internal/infrastructure/storage"
+	"github.com/masterfabric-go/masterfabric/internal/infrastructure/worker"
+
+	// Domain
+	domainStorage "github.com/masterfabric-go/masterfabric/internal/domain/storage"
 
 	// Application use cases
 	apimgmtUC "github.com/masterfabric-go/masterfabric/internal/application/apimanagement/usecase"
@@ -44,8 +49,10 @@ import (
 	// Shared
 	"github.com/masterfabric-go/masterfabric/internal/shared/cache"
 	"github.com/masterfabric-go/masterfabric/internal/shared/config"
+	"github.com/masterfabric-go/masterfabric/internal/shared/crypto"
 	"github.com/masterfabric-go/masterfabric/internal/shared/database"
 	"github.com/masterfabric-go/masterfabric/internal/shared/events"
+	"github.com/masterfabric-go/masterfabric/internal/shared/jobs"
 	"github.com/masterfabric-go/masterfabric/internal/shared/logger"
 	"github.com/masterfabric-go/masterfabric/internal/shared/telemetry"
 	"github.com/masterfabric-go/masterfabric/internal/shared/version"
@@ -103,12 +110,48 @@ func run() error {
 		log.Info("connected to redis")
 	}
 
-	// Initialize event bus (Kafka or in-process)
+	// Initialize event bus (Kafka or in-process). For Kafka, consumption is
+	// started later (after all Subscribe calls in buildDependencies).
 	eventBus := initEventBus(ctx, cfg, log)
 	defer func() { _ = eventBus.Close() }()
 
-	// Build dependencies
-	deps := buildDependencies(log, cfg, db, redisClient, eventBus)
+	// Initialize object storage (MinIO) for document uploads. Optional: when
+	// disabled or unreachable the upload/presign endpoints return 503.
+	var objStorage domainStorage.ObjectStorage
+	if cfg.Storage.Enabled {
+		ms, sErr := infraStorage.NewMinIOStorage(ctx, cfg.Storage, log)
+		if sErr != nil {
+			log.Warn("object storage unavailable, document uploads disabled", "error", sErr)
+		} else {
+			objStorage = ms
+			log.Info("connected to object storage (minio)", "bucket", cfg.Storage.Bucket)
+		}
+	} else {
+		log.Info("object storage disabled (set STORAGE_ENABLED=true to enable MinIO uploads)")
+	}
+
+	// Initialize PII encryptor (AES-256-GCM) for protecting sensitive data at rest (KVKK).
+	enc, err := crypto.NewEncryptor(cfg.Security.PIIEncryptionKey)
+	if err != nil {
+		log.Error("failed to initialize PII encryptor, using fallback key", "error", err)
+		enc, _ = crypto.NewEncryptor("parseltakip-fallback-key-change-me")
+	}
+
+	// Ensure the bootstrap super-admin exists (idempotent) before serving traffic.
+	if db != nil && cfg.SeedAdmin.Enabled {
+		if err := seedSuperAdmin(ctx, log, cfg, db, enc, eventBus); err != nil {
+			log.Error("super-admin seed failed", "error", err)
+		}
+	}
+
+	// Build dependencies (also registers all event-bus subscribers + job workers)
+	deps := buildDependencies(log, cfg, db, redisClient, eventBus, enc, objStorage)
+
+	// Now that all Subscribe calls are registered, start Kafka consumption.
+	if kafkaBus, ok := eventBus.(*infraKafka.Bus); ok {
+		kafkaBus.Start(context.Background())
+		log.Info("kafka consumption started")
+	}
 
 	// Build router
 	r := router.New(deps)
@@ -165,12 +208,13 @@ func initEventBus(ctx context.Context, cfg *config.Config, log *slog.Logger) eve
 		"group_id", cfg.Kafka.GroupID,
 	)
 
-	// Ensure topics exist
+	// Ensure topics exist (domain event topics + background job topics)
 	if len(cfg.Kafka.Brokers) > 0 {
+		topics := append(infraKafka.DefaultTopics(), jobs.AllTopics()...)
 		if err := infraKafka.EnsureTopics(
 			ctx,
 			cfg.Kafka.Brokers[0],
-			infraKafka.DefaultTopics(),
+			topics,
 			cfg.Kafka.NumPartitions,
 			cfg.Kafka.ReplicationFactor,
 			log,
@@ -182,10 +226,9 @@ func initEventBus(ctx context.Context, cfg *config.Config, log *slog.Logger) eve
 
 	kafkaBus := infraKafka.NewBus(cfg.Kafka.Brokers, cfg.Kafka.GroupID, log)
 
-	// Start consuming (after subscriptions are registered in buildDependencies)
-	// We start consumption with a background context so it outlives the startup ctx.
-	kafkaBus.Start(context.Background())
-
+	// NOTE: Start() is intentionally deferred to run() until after all Subscribe
+	// calls (in buildDependencies) have registered their handlers, because the
+	// Kafka consumer snapshots its handler set at Start time.
 	log.Info("kafka event bus initialized")
 	return kafkaBus
 }
@@ -196,6 +239,8 @@ func buildDependencies(
 	db *pgxpool.Pool,
 	redisClient *redis.Client,
 	eventBus events.EventBus,
+	enc *crypto.Encryptor,
+	objStorage domainStorage.ObjectStorage,
 ) router.Dependencies {
 	deps := router.Dependencies{
 		Logger: log,
@@ -203,13 +248,21 @@ func buildDependencies(
 		Redis:  redisClient,
 	}
 
+	// --- Background job queue (Kafka-backed worker pool + enqueuer) ---
+	// The enqueuer offloads heavy/high-volume work (document post-processing,
+	// notification + email dispatch) from the request path. The worker pool
+	// consumes those jobs with bounded retry and a dead-letter topic.
+	enqueuer := worker.NewBusEnqueuer(eventBus)
+	workerPool := worker.NewPool(eventBus, log, 3)
+	workerPool.RegisterDefaults(objStorage)
+
 	if db == nil {
 		log.Warn("database not available, API endpoints will not work")
 		return deps
 	}
 
 	// --- Repositories ---
-	userRepo := pgIam.NewUserRepo(db)
+	userRepo := pgIam.NewUserRepo(db, enc)
 	roleRepo := pgIam.NewRoleRepo(db)
 	orgUserRepo := pgIam.NewOrgUserRepo(db)
 	systemRoleRepo := pgIam.NewSystemRoleRepo(db)
@@ -235,7 +288,7 @@ func buildDependencies(
 	statsRepo := pgStats.NewStatsRepo(db)
 
 	// --- Services ---
-	jwtService := infraAuth.NewJWTService(cfg.JWT)
+	jwtService := infraAuth.NewJWTService(cfg.JWT, cfg.Security.BcryptCost)
 	rbacService := infraAuth.NewRBACService(roleRepo, redisClient)
 
 	deps.AuthService = jwtService
@@ -246,7 +299,7 @@ func buildDependencies(
 	// --- Use cases (with event bus for domain event publishing) ---
 	registerUC := iamUC.NewRegisterUseCase(userRepo, jwtService, eventBus)
 	ensureOrgRolesUC := iamUC.NewEnsureOrgRolesUseCase(systemRoleRepo, roleRepo)
-	loginUC := iamUC.NewLoginUseCase(userRepo, orgUserRepo, roleRepo, rbacService, jwtService, ensureOrgRolesUC, cfg.JWT.ExpirationHours)
+	loginUC := iamUC.NewLoginUseCase(userRepo, orgUserRepo, roleRepo, rbacService, jwtService, ensureOrgRolesUC, cfg.JWT.ExpirationHours, cfg.Security.MaxLoginAttempts, cfg.Security.LockoutDuration)
 	assignRoleUC := iamUC.NewAssignRoleUseCase(roleRepo, rbacService, eventBus)
 	manageUsersUC := iamUC.NewManageUsersUseCase(userRepo)
 	manageRolesUC := iamUC.NewManageRolesUseCase(roleRepo, rbacService, eventBus)
@@ -335,9 +388,9 @@ func buildDependencies(
 	deps.BuildingHandler = urbanHandler.NewBuildingHandler(buildingCmd, buildingQuery)
 	deps.BuildingUnitHandler = urbanHandler.NewBuildingUnitHandler(buildingUnitCmd, buildingUnitQuery)
 	deps.PropertyOwnerHandler = urbanHandler.NewPropertyOwnerHandler(propertyOwnerCmd, propertyOwnerQuery)
-	deps.DocumentHandler = urbanHandler.NewDocumentHandler(documentCmd, documentQuery)
+	deps.DocumentHandler = urbanHandler.NewDocumentHandler(documentCmd, documentQuery, objStorage, enqueuer, cfg.Storage.PresignExpiry)
 	deps.ApprovalHandler = urbanHandler.NewApprovalHandler(approvalCmd, approvalQuery)
-	deps.NotificationHandler = urbanHandler.NewNotificationHandler(notificationCmd, notificationQuery)
+	deps.NotificationHandler = urbanHandler.NewNotificationHandler(notificationCmd, notificationQuery, enqueuer)
 	deps.WorkflowHandler = urbanHandler.NewWorkflowHandler(workflowCmd, workflowQuery)
 	deps.MessageHandler = urbanHandler.NewMessageHandler(messageCmd, messageQuery)
 	deps.AppointmentHandler = urbanHandler.NewAppointmentHandler(appointmentCmd, appointmentQuery)

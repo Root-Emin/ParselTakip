@@ -10,6 +10,7 @@ import (
 	"github.com/masterfabric-go/masterfabric/internal/application/urbantransform/constants"
 	"github.com/masterfabric-go/masterfabric/internal/application/urbantransform/dto"
 	"github.com/masterfabric-go/masterfabric/internal/application/urbantransform/query"
+	"github.com/masterfabric-go/masterfabric/internal/shared/jobs"
 	"github.com/masterfabric-go/masterfabric/internal/shared/middleware"
 	"github.com/masterfabric-go/masterfabric/internal/shared/response"
 	"github.com/masterfabric-go/masterfabric/internal/shared/validator"
@@ -17,13 +18,15 @@ import (
 
 // NotificationHandler exposes CQRS-based HTTP endpoints for notifications.
 type NotificationHandler struct {
-	cmd *command.NotificationCommandHandler
-	qry *query.NotificationQueryHandler
+	cmd  *command.NotificationCommandHandler
+	qry  *query.NotificationQueryHandler
+	jobs jobs.Enqueuer
 }
 
-// NewNotificationHandler creates a new NotificationHandler.
-func NewNotificationHandler(cmd *command.NotificationCommandHandler, qry *query.NotificationQueryHandler) *NotificationHandler {
-	return &NotificationHandler{cmd: cmd, qry: qry}
+// NewNotificationHandler creates a new NotificationHandler. enqueuer may be nil
+// (notification delivery then stays synchronous / in-app only).
+func NewNotificationHandler(cmd *command.NotificationCommandHandler, qry *query.NotificationQueryHandler, enqueuer jobs.Enqueuer) *NotificationHandler {
+	return &NotificationHandler{cmd: cmd, qry: qry, jobs: enqueuer}
 }
 
 // Create handles POST /notifications (send a notification).
@@ -43,6 +46,17 @@ func (h *NotificationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err)
 		return
 	}
+
+	// Deliver external channels (email/SMS) off the request path via the queue.
+	if h.jobs != nil && (result.Channel == "email" || result.Channel == "sms") {
+		_ = h.jobs.Enqueue(r.Context(), jobs.TopicNotificationDispatch, jobs.NotificationDispatchJob{
+			NotificationID: result.ID.String(),
+			OrganizationID: orgID.String(),
+			AppID:          appID.String(),
+			Channel:        result.Channel,
+		})
+	}
+
 	response.CreatedEnvelope(w, constants.MsgNotificationCreated, result)
 }
 

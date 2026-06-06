@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/masterfabric-go/masterfabric/internal/application/iam/dto"
@@ -28,6 +29,10 @@ func (s *stubUserRepo) Update(context.Context, *model.User) error { return nil }
 func (s *stubUserRepo) Delete(context.Context, uuid.UUID) error   { return nil }
 func (s *stubUserRepo) List(context.Context, int, int) ([]*model.User, int, error) {
 	return nil, 0, nil
+}
+func (s *stubUserRepo) RecordLoginSuccess(context.Context, uuid.UUID) error { return nil }
+func (s *stubUserRepo) RecordLoginFailure(context.Context, uuid.UUID, int, time.Duration) error {
+	return nil
 }
 
 type stubOrgUserRepo struct {
@@ -133,6 +138,8 @@ func TestLoginUseCase_BasicTokenWithoutOrganization(t *testing.T) {
 		&stubAuth{},
 		nil,
 		24,
+		5,
+		15*time.Minute,
 	)
 
 	resp, err := uc.Execute(context.Background(), dto.LoginRequest{
@@ -156,6 +163,8 @@ func TestLoginUseCase_OrgScopedTokenIncludesRBACClaims(t *testing.T) {
 		&stubAuth{},
 		nil,
 		24,
+		5,
+		15*time.Minute,
 	)
 
 	resp, err := uc.Execute(context.Background(), dto.LoginRequest{

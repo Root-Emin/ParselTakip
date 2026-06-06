@@ -48,6 +48,9 @@ type Document struct {
 	FilePath       string          `json:"file_path"`
 	FileSize       *int64          `json:"file_size,omitempty"`
 	MimeType       string          `json:"mime_type"`
+	StorageBucket  string          `json:"storage_bucket,omitempty"`
+	StorageKey     string          `json:"storage_key,omitempty"`
+	Checksum       string          `json:"checksum,omitempty"`
 	Status         DocumentStatus  `json:"status"`
 	IsNotarized    bool            `json:"is_notarized"`
 	NotaryDate     *time.Time      `json:"notary_date,omitempty"`

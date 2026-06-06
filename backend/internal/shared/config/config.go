@@ -10,12 +10,15 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	JWT      JWTConfig
-	Kafka    KafkaConfig
-	Log      LogConfig
+	Server    ServerConfig
+	Database  DatabaseConfig
+	Redis     RedisConfig
+	JWT       JWTConfig
+	Kafka     KafkaConfig
+	Log       LogConfig
+	Storage   StorageConfig
+	Security  SecurityConfig
+	SeedAdmin SeedAdminConfig
 }
 
 // ServerConfig holds HTTP server settings.
@@ -82,6 +85,39 @@ type LogConfig struct {
 	Format string // json, text
 }
 
+// StorageConfig holds MinIO/S3-compatible object storage settings used for
+// document (evrak) uploads.
+type StorageConfig struct {
+	Enabled        bool
+	Endpoint       string        // internal endpoint used by the server (e.g. localhost:9000)
+	PublicEndpoint string        // endpoint embedded in presigned URLs handed to clients; defaults to Endpoint
+	AccessKey      string
+	SecretKey      string
+	Bucket         string
+	Region         string
+	UseSSL         bool
+	PresignExpiry  time.Duration // TTL for presigned GET/PUT URLs (KVKK: keep short)
+}
+
+// SecurityConfig holds security and KVKK-related settings.
+type SecurityConfig struct {
+	PIIEncryptionKey string        // secret used to derive AES-256-GCM key for PII at rest
+	BcryptCost       int           // bcrypt cost factor for password hashing
+	MaxLoginAttempts int           // failed attempts before account lockout
+	LockoutDuration  time.Duration // how long an account stays locked
+}
+
+// SeedAdminConfig holds the bootstrap super-admin that is ensured on startup.
+type SeedAdminConfig struct {
+	Enabled  bool
+	Email    string
+	Password string
+	OrgName  string
+	OrgSlug  string
+	AppName  string
+	AppSlug  string
+}
+
 // Load reads configuration from environment variables with sensible defaults.
 func Load() *Config {
 	return &Config{
@@ -123,6 +159,32 @@ func Load() *Config {
 		Log: LogConfig{
 			Level:  envOrDefault("LOG_LEVEL", "info"),
 			Format: envOrDefault("LOG_FORMAT", "json"),
+		},
+		Storage: StorageConfig{
+			Enabled:        envOrDefault("MINIO_ENABLED", "true") == "true",
+			Endpoint:       envOrDefault("MINIO_ENDPOINT", "localhost:9000"),
+			PublicEndpoint: envOrDefault("MINIO_PUBLIC_ENDPOINT", ""),
+			AccessKey:      envOrDefault("MINIO_ACCESS_KEY", "minioadmin"),
+			SecretKey:      envOrDefault("MINIO_SECRET_KEY", "minioadmin"),
+			Bucket:         envOrDefault("MINIO_BUCKET", "parseltakip"),
+			Region:         envOrDefault("MINIO_REGION", "us-east-1"),
+			UseSSL:         envOrDefault("MINIO_USE_SSL", "false") == "true",
+			PresignExpiry:  time.Duration(envOrDefaultInt("MINIO_PRESIGN_EXPIRY_MINUTES", 10)) * time.Minute,
+		},
+		Security: SecurityConfig{
+			PIIEncryptionKey: envOrDefault("PII_ENCRYPTION_KEY", "dev-pii-key-change-me-in-production"),
+			BcryptCost:       envOrDefaultInt("BCRYPT_COST", 12),
+			MaxLoginAttempts: envOrDefaultInt("MAX_LOGIN_ATTEMPTS", 5),
+			LockoutDuration:  time.Duration(envOrDefaultInt("LOGIN_LOCKOUT_MINUTES", 15)) * time.Minute,
+		},
+		SeedAdmin: SeedAdminConfig{
+			Enabled:  envOrDefault("SEED_ADMIN_ENABLED", "true") == "true",
+			Email:    envOrDefault("SEED_ADMIN_EMAIL", "muhammedysnvurucu@gmail.com"),
+			Password: envOrDefault("SEED_ADMIN_PASSWORD", "cursor123"),
+			OrgName:  envOrDefault("SEED_ADMIN_ORG_NAME", "ParselTakip"),
+			OrgSlug:  envOrDefault("SEED_ADMIN_ORG_SLUG", "parseltakip"),
+			AppName:  envOrDefault("SEED_ADMIN_APP_NAME", "ParselTakip"),
+			AppSlug:  envOrDefault("SEED_ADMIN_APP_SLUG", "parseltakip"),
 		},
 	}
 }

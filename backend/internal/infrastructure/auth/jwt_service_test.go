@@ -16,7 +16,7 @@ func newTestJWTService() *JWTService {
 		Secret:          "test-secret-key-for-testing-only",
 		ExpirationHours: 1,
 		Issuer:          "test",
-	})
+	}, 4) // bcrypt.MinCost for fast tests
 }
 
 func TestJWTService_HashAndVerifyPassword(t *testing.T) {
@@ -79,7 +79,7 @@ func TestJWTService_WrongSecret(t *testing.T) {
 		Secret:          "different-secret",
 		ExpirationHours: 1,
 		Issuer:          "test",
-	})
+	}, 4)
 	ctx := context.Background()
 
 	token, err := svc1.GenerateToken(ctx, service.TokenClaims{

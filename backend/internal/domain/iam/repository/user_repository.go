@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/masterfabric-go/masterfabric/internal/domain/iam/model"
@@ -15,4 +16,8 @@ type UserRepository interface {
 	Update(ctx context.Context, user *model.User) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	List(ctx context.Context, offset, limit int) ([]*model.User, int, error)
+
+	// Login security counters (brute-force lockout).
+	RecordLoginSuccess(ctx context.Context, id uuid.UUID) error
+	RecordLoginFailure(ctx context.Context, id uuid.UUID, maxAttempts int, lockDuration time.Duration) error
 }

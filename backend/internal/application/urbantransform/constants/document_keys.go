@@ -57,4 +57,7 @@ const (
 	MsgInvalidDocumentID = "document.invalid_id"
 	MsgDocumentTypesListed = "document_type.listed"
 	MsgReviewsListed     = "document_review.listed"
+	MsgDocumentUploaded    = "document.uploaded"
+	MsgDocumentPresigned   = "document.presign_url"
+	MsgDocumentDownloadURL = "document.download_url"
 )
