@@ -17,6 +17,7 @@ const (
 	ContextKeyUserID         contextKey = "auth_user_id"
 	ContextKeyEmail          contextKey = "auth_email"
 	ContextKeyOrganizationID contextKey = "auth_organization_id"
+	ContextKeyRoles          contextKey = "auth_roles"
 	ContextKeyPermissions    contextKey = "auth_permissions"
 	ContextKeyClaims         contextKey = "auth_claims"
 )
@@ -49,6 +50,7 @@ func JWTAuth(authService service.AuthService) func(http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, ContextKeyUserID, claims.UserID)
 			ctx = context.WithValue(ctx, ContextKeyEmail, claims.Email)
 			ctx = context.WithValue(ctx, ContextKeyOrganizationID, claims.OrganizationID)
+			ctx = context.WithValue(ctx, ContextKeyRoles, claims.Roles)
 			ctx = context.WithValue(ctx, ContextKeyPermissions, claims.Permissions)
 
 			// Also populate logger context
@@ -99,4 +101,22 @@ func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 func OrgIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(ContextKeyOrganizationID).(uuid.UUID)
 	return id, ok
+}
+
+// RolesFromContext extracts role names from the context.
+func RolesFromContext(ctx context.Context) ([]string, bool) {
+	roles, ok := ctx.Value(ContextKeyRoles).([]string)
+	return roles, ok
+}
+
+// PermissionsFromContext extracts permissions from the context.
+func PermissionsFromContext(ctx context.Context) ([]string, bool) {
+	permissions, ok := ctx.Value(ContextKeyPermissions).([]string)
+	return permissions, ok
+}
+
+// ClaimsFromContext extracts full JWT claims from the context.
+func ClaimsFromContext(ctx context.Context) (*service.TokenClaims, bool) {
+	claims, ok := ctx.Value(ContextKeyClaims).(*service.TokenClaims)
+	return claims, ok
 }

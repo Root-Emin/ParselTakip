@@ -17,10 +17,12 @@ import (
 
 // Handler provides IAM HTTP handlers.
 type Handler struct {
-	registerUC  *usecase.RegisterUseCase
-	loginUC     *usecase.LoginUseCase
-	assignRoleUC *usecase.AssignRoleUseCase
-	userRepo    iamRepo.UserRepository
+	registerUC    *usecase.RegisterUseCase
+	loginUC       *usecase.LoginUseCase
+	assignRoleUC  *usecase.AssignRoleUseCase
+	manageUsersUC *usecase.ManageUsersUseCase
+	manageRolesUC *usecase.ManageRolesUseCase
+	userRepo      iamRepo.UserRepository
 }
 
 // NewHandler creates a new IAM handler.
@@ -28,13 +30,17 @@ func NewHandler(
 	registerUC *usecase.RegisterUseCase,
 	loginUC *usecase.LoginUseCase,
 	assignRoleUC *usecase.AssignRoleUseCase,
+	manageUsersUC *usecase.ManageUsersUseCase,
+	manageRolesUC *usecase.ManageRolesUseCase,
 	userRepo iamRepo.UserRepository,
 ) *Handler {
 	return &Handler{
-		registerUC:  registerUC,
-		loginUC:     loginUC,
-		assignRoleUC: assignRoleUC,
-		userRepo:    userRepo,
+		registerUC:    registerUC,
+		loginUC:       loginUC,
+		assignRoleUC:  assignRoleUC,
+		manageUsersUC: manageUsersUC,
+		manageRolesUC: manageRolesUC,
+		userRepo:      userRepo,
 	}
 }
 
@@ -102,13 +108,22 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSON(w, http.StatusOK, dto.UserInfo{
-		ID:        user.ID,
-		Email:     user.Email,
-		FirstName: user.FirstName,
-		LastName:  user.LastName,
-		Status:    string(user.Status),
-		CreatedAt: user.CreatedAt,
+	orgID, _ := middleware.OrgIDFromContext(r.Context())
+	roles, _ := middleware.RolesFromContext(r.Context())
+	permissions, _ := middleware.PermissionsFromContext(r.Context())
+
+	response.JSON(w, http.StatusOK, dto.MeResponse{
+		User: dto.UserInfo{
+			ID:        user.ID,
+			Email:     user.Email,
+			FirstName: user.FirstName,
+			LastName:  user.LastName,
+			Status:    string(user.Status),
+			CreatedAt: user.CreatedAt,
+		},
+		OrganizationID: orgID,
+		Roles:          roles,
+		Permissions:    permissions,
 	})
 }
 

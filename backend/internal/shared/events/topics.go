@@ -15,6 +15,9 @@ const (
 
 	// Audit events (consumers write to audit log)
 	TopicAudit = "masterfabric.audit"
+
+	// Urban Transformation events
+	TopicUrbanTransform = "masterfabric.urban-transform"
 )
 
 // Event type constants used in Envelope.Type for routing / filtering.
@@ -34,4 +37,9 @@ const (
 	EventTypeEndpointCreated = "endpoint.created"
 	EventTypeEndpointUpdated = "endpoint.updated"
 	EventTypeEndpointRetired = "endpoint.retired"
+
+	// Urban Transformation
+	EventTypeProjectCreated = "project.created"
+	EventTypeProjectUpdated = "project.updated"
+	EventTypeProjectDeleted = "project.deleted"
 )

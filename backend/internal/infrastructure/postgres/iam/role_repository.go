@@ -210,3 +210,43 @@ func (r *RoleRepo) GetUserPermissions(ctx context.Context, userID, orgID uuid.UU
 	}
 	return perms, nil
 }
+
+func (r *RoleRepo) GetUserRoleNames(ctx context.Context, userID, orgID uuid.UUID) ([]string, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT DISTINCT r.name
+		 FROM user_roles ur
+		 JOIN roles r ON ur.role_id = r.id
+		 WHERE ur.user_id = $1 AND ur.organization_id = $2
+		 ORDER BY r.name`, userID, orgID,
+	)
+	if err != nil {
+		return nil, domainErr.New(domainErr.ErrInternal, "failed to get user role names", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, domainErr.New(domainErr.ErrInternal, "failed to scan role name", err)
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+func (r *RoleRepo) GetByNameAndScope(ctx context.Context, scopeType model.ScopeType, scopeID uuid.UUID, name string) (*model.Role, error) {
+	var role model.Role
+	err := r.db.QueryRow(ctx,
+		`SELECT id, scope_type, scope_id, name, description, created_at, updated_at
+		 FROM roles WHERE scope_type=$1 AND scope_id=$2 AND name=$3`,
+		scopeType, scopeID, name,
+	).Scan(&role.ID, &role.ScopeType, &role.ScopeID, &role.Name, &role.Description, &role.CreatedAt, &role.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domainErr.New(domainErr.ErrNotFound, "role not found", nil)
+		}
+		return nil, domainErr.New(domainErr.ErrInternal, "failed to get role by name", err)
+	}
+	return &role, nil
+}

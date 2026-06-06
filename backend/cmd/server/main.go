@@ -18,18 +18,24 @@ import (
 	apimgmtHandler "github.com/masterfabric-go/masterfabric/internal/infrastructure/http/handler/apimanagement"
 	auditHandler "github.com/masterfabric-go/masterfabric/internal/infrastructure/http/handler/audit"
 	iamHandler "github.com/masterfabric-go/masterfabric/internal/infrastructure/http/handler/iam"
+	statsHandler "github.com/masterfabric-go/masterfabric/internal/infrastructure/http/handler/stats"
 	tenantHandler "github.com/masterfabric-go/masterfabric/internal/infrastructure/http/handler/tenant"
 	"github.com/masterfabric-go/masterfabric/internal/infrastructure/http/router"
 	infraKafka "github.com/masterfabric-go/masterfabric/internal/infrastructure/kafka"
 	pgApimgmt "github.com/masterfabric-go/masterfabric/internal/infrastructure/postgres/apimanagement"
 	pgAudit "github.com/masterfabric-go/masterfabric/internal/infrastructure/postgres/audit"
 	pgIam "github.com/masterfabric-go/masterfabric/internal/infrastructure/postgres/iam"
+	pgStats "github.com/masterfabric-go/masterfabric/internal/infrastructure/postgres/stats"
 	pgTenant "github.com/masterfabric-go/masterfabric/internal/infrastructure/postgres/tenant"
+	pgUrban "github.com/masterfabric-go/masterfabric/internal/infrastructure/postgres/urbantransform"
+	urbanHandler "github.com/masterfabric-go/masterfabric/internal/infrastructure/http/handler/urbantransform"
 
 	// Application use cases
 	apimgmtUC "github.com/masterfabric-go/masterfabric/internal/application/apimanagement/usecase"
 	iamUC "github.com/masterfabric-go/masterfabric/internal/application/iam/usecase"
 	tenantUC "github.com/masterfabric-go/masterfabric/internal/application/tenant/usecase"
+	urbanCmd "github.com/masterfabric-go/masterfabric/internal/application/urbantransform/command"
+	urbanQuery "github.com/masterfabric-go/masterfabric/internal/application/urbantransform/query"
 
 	// Gateway
 	"github.com/masterfabric-go/masterfabric/internal/gateway"
@@ -205,6 +211,8 @@ func buildDependencies(
 	// --- Repositories ---
 	userRepo := pgIam.NewUserRepo(db)
 	roleRepo := pgIam.NewRoleRepo(db)
+	orgUserRepo := pgIam.NewOrgUserRepo(db)
+	systemRoleRepo := pgIam.NewSystemRoleRepo(db)
 	orgRepo := pgTenant.NewOrgRepo(db)
 	workspaceRepo := pgTenant.NewWorkspaceRepository(db)
 	appRepo := pgTenant.NewAppRepo(db)
@@ -212,6 +220,19 @@ func buildDependencies(
 	endpointRepo := pgApimgmt.NewEndpointRepo(db)
 	policyRepo := pgApimgmt.NewPolicyRepo(db)
 	auditRepo := pgAudit.NewAuditRepo(db)
+	projectRepo := pgUrban.NewProjectRepo(db)
+	contractorRepo := pgUrban.NewContractorRepo(db)
+	buildingRepo := pgUrban.NewBuildingRepo(db)
+	buildingUnitRepo := pgUrban.NewBuildingUnitRepo(db)
+	propertyOwnerRepo := pgUrban.NewPropertyOwnerRepo(db)
+	documentRepo := pgUrban.NewDocumentRepo(db)
+	documentTypeRepo := pgUrban.NewDocumentTypeRepo(db)
+	approvalRepo := pgUrban.NewApprovalRepo(db)
+	notificationRepo := pgUrban.NewNotificationRepo(db)
+	workflowRepo := pgUrban.NewWorkflowRepo(db)
+	messageRepo := pgUrban.NewMessageRepo(db)
+	appointmentRepo := pgUrban.NewAppointmentRepo(db)
+	statsRepo := pgStats.NewStatsRepo(db)
 
 	// --- Services ---
 	jwtService := infraAuth.NewJWTService(cfg.JWT)
@@ -224,9 +245,13 @@ func buildDependencies(
 
 	// --- Use cases (with event bus for domain event publishing) ---
 	registerUC := iamUC.NewRegisterUseCase(userRepo, jwtService, eventBus)
-	loginUC := iamUC.NewLoginUseCase(userRepo, jwtService)
+	ensureOrgRolesUC := iamUC.NewEnsureOrgRolesUseCase(systemRoleRepo, roleRepo)
+	loginUC := iamUC.NewLoginUseCase(userRepo, orgUserRepo, roleRepo, rbacService, jwtService, ensureOrgRolesUC, cfg.JWT.ExpirationHours)
 	assignRoleUC := iamUC.NewAssignRoleUseCase(roleRepo, rbacService, eventBus)
+	manageUsersUC := iamUC.NewManageUsersUseCase(userRepo)
+	manageRolesUC := iamUC.NewManageRolesUseCase(roleRepo, rbacService, eventBus)
 	createOrgUC := tenantUC.NewCreateOrgUseCase(orgRepo, eventBus)
+	manageOrgUC := tenantUC.NewManageOrgUseCase(orgRepo, eventBus)
 	createWorkspaceUC := tenantUC.NewCreateWorkspaceUseCase(workspaceRepo, orgRepo, eventBus)
 	listWorkspacesUC := tenantUC.NewListWorkspacesUseCase(workspaceRepo)
 	updateWorkspaceUC := tenantUC.NewUpdateWorkspaceUseCase(workspaceRepo)
@@ -236,6 +261,36 @@ func buildDependencies(
 	updatePolicyUC := apimgmtUC.NewUpdatePolicyUseCase(policyRepo)
 	retireEndpointUC := apimgmtUC.NewRetireEndpointUseCase(endpointRepo, eventBus)
 	activateEndpointUC := apimgmtUC.NewActivateEndpointUseCase(endpointRepo, eventBus)
+
+	// Urban transformation CQRS handlers (commands + queries)
+	createProjectCmd := urbanCmd.NewCreateProjectHandler(projectRepo, eventBus)
+	updateProjectCmd := urbanCmd.NewUpdateProjectHandler(projectRepo, eventBus)
+	deleteProjectCmd := urbanCmd.NewDeleteProjectHandler(projectRepo, eventBus)
+	getProjectQuery := urbanQuery.NewGetProjectHandler(projectRepo)
+	listProjectsQuery := urbanQuery.NewListProjectsHandler(projectRepo)
+
+	contractorCmd := urbanCmd.NewContractorCommandHandler(contractorRepo, eventBus)
+	contractorQuery := urbanQuery.NewContractorQueryHandler(contractorRepo)
+	buildingCmd := urbanCmd.NewBuildingCommandHandler(buildingRepo, eventBus)
+	buildingQuery := urbanQuery.NewBuildingQueryHandler(buildingRepo)
+	buildingUnitCmd := urbanCmd.NewBuildingUnitCommandHandler(buildingUnitRepo, eventBus)
+	buildingUnitQuery := urbanQuery.NewBuildingUnitQueryHandler(buildingUnitRepo)
+	propertyOwnerCmd := urbanCmd.NewPropertyOwnerCommandHandler(propertyOwnerRepo, eventBus)
+	propertyOwnerQuery := urbanQuery.NewPropertyOwnerQueryHandler(propertyOwnerRepo)
+
+	documentCmd := urbanCmd.NewDocumentCommandHandler(documentRepo, eventBus)
+	documentQuery := urbanQuery.NewDocumentQueryHandler(documentRepo, documentTypeRepo)
+	approvalCmd := urbanCmd.NewApprovalCommandHandler(approvalRepo, eventBus)
+	approvalQuery := urbanQuery.NewApprovalQueryHandler(approvalRepo)
+	notificationCmd := urbanCmd.NewNotificationCommandHandler(notificationRepo, eventBus)
+	notificationQuery := urbanQuery.NewNotificationQueryHandler(notificationRepo)
+
+	workflowCmd := urbanCmd.NewWorkflowCommandHandler(workflowRepo, eventBus)
+	workflowQuery := urbanQuery.NewWorkflowQueryHandler(workflowRepo)
+	messageCmd := urbanCmd.NewMessageCommandHandler(messageRepo, eventBus)
+	messageQuery := urbanQuery.NewMessageQueryHandler(messageRepo)
+	appointmentCmd := urbanCmd.NewAppointmentCommandHandler(appointmentRepo, eventBus)
+	appointmentQuery := urbanQuery.NewAppointmentQueryHandler(appointmentRepo)
 
 	// --- Register sample Kafka consumers ---
 	// Log all IAM events
@@ -255,7 +310,7 @@ func buildDependencies(
 	})
 
 	// --- Handlers ---
-	deps.IAMHandler = iamHandler.NewHandler(registerUC, loginUC, assignRoleUC, userRepo)
+	deps.IAMHandler = iamHandler.NewHandler(registerUC, loginUC, assignRoleUC, manageUsersUC, manageRolesUC, userRepo)
 	deps.TenantHandler = tenantHandler.NewHandler(
 		createOrgUC,
 		createAppUC,
@@ -263,11 +318,36 @@ func buildDependencies(
 		createWorkspaceUC,
 		listWorkspacesUC,
 		updateWorkspaceUC,
+		manageOrgUC,
 		orgRepo,
 		appRepo,
 	)
 	deps.APIMgmtHandler = apimgmtHandler.NewHandler(defineEndpointUC, updatePolicyUC, retireEndpointUC, activateEndpointUC, endpointRepo, policyRepo)
 	deps.AuditHandler = auditHandler.NewHandler(auditRepo)
+	deps.ProjectHandler = urbanHandler.NewProjectHandler(
+		createProjectCmd,
+		updateProjectCmd,
+		deleteProjectCmd,
+		getProjectQuery,
+		listProjectsQuery,
+	)
+	deps.ContractorHandler = urbanHandler.NewContractorHandler(contractorCmd, contractorQuery)
+	deps.BuildingHandler = urbanHandler.NewBuildingHandler(buildingCmd, buildingQuery)
+	deps.BuildingUnitHandler = urbanHandler.NewBuildingUnitHandler(buildingUnitCmd, buildingUnitQuery)
+	deps.PropertyOwnerHandler = urbanHandler.NewPropertyOwnerHandler(propertyOwnerCmd, propertyOwnerQuery)
+	deps.DocumentHandler = urbanHandler.NewDocumentHandler(documentCmd, documentQuery)
+	deps.ApprovalHandler = urbanHandler.NewApprovalHandler(approvalCmd, approvalQuery)
+	deps.NotificationHandler = urbanHandler.NewNotificationHandler(notificationCmd, notificationQuery)
+	deps.WorkflowHandler = urbanHandler.NewWorkflowHandler(workflowCmd, workflowQuery)
+	deps.MessageHandler = urbanHandler.NewMessageHandler(messageCmd, messageQuery)
+	deps.AppointmentHandler = urbanHandler.NewAppointmentHandler(appointmentCmd, appointmentQuery)
+	deps.StatsHandler = statsHandler.NewHandler(statsRepo)
+
+	// Log all urban transformation events
+	eventBus.Subscribe(events.TopicUrbanTransform, func(ctx context.Context, event events.Event) error {
+		log.Info("urban-transform event received", "event", event)
+		return nil
+	})
 
 	// --- Gateway pipeline with interceptors ---
 	// Create interceptor chain: schema validation, PII masking, request/response transformers

@@ -16,14 +16,28 @@ type RegisterRequest struct {
 
 // LoginRequest is the input for user login.
 type LoginRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
+	Email          string     `json:"email" validate:"required,email"`
+	Password       string     `json:"password" validate:"required"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty"`
 }
 
 // LoginResponse is the output for successful login.
 type LoginResponse struct {
-	Token string   `json:"token"`
-	User  UserInfo `json:"user"`
+	Token            string    `json:"token"`
+	TokenType        string    `json:"token_type"`
+	ExpiresInHours   int       `json:"expires_in_hours"`
+	User             UserInfo  `json:"user"`
+	OrganizationID   uuid.UUID `json:"organization_id,omitempty"`
+	Roles            []string  `json:"roles,omitempty"`
+	Permissions      []string  `json:"permissions,omitempty"`
+}
+
+// MeResponse is the authenticated user profile with JWT context.
+type MeResponse struct {
+	User           UserInfo  `json:"user"`
+	OrganizationID uuid.UUID `json:"organization_id,omitempty"`
+	Roles          []string  `json:"roles,omitempty"`
+	Permissions    []string  `json:"permissions,omitempty"`
 }
 
 // UserInfo is a public user representation.

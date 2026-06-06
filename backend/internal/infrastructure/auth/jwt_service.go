@@ -66,9 +66,11 @@ func (s *JWTService) GenerateToken(_ context.Context, claims service.TokenClaims
 		},
 		UserID:         claims.UserID.String(),
 		Email:          claims.Email,
-		OrganizationID: claims.OrganizationID.String(),
 		Roles:          claims.Roles,
 		Permissions:    claims.Permissions,
+	}
+	if claims.OrganizationID != uuid.Nil {
+		c.OrganizationID = claims.OrganizationID.String()
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, c)

@@ -25,4 +25,6 @@ type RoleRepository interface {
 	RemoveRoleFromUser(ctx context.Context, userID, roleID uuid.UUID) error
 	GetUserRoles(ctx context.Context, userID, orgID uuid.UUID) ([]*model.UserRole, error)
 	GetUserPermissions(ctx context.Context, userID, orgID uuid.UUID) ([]string, error)
+	GetUserRoleNames(ctx context.Context, userID, orgID uuid.UUID) ([]string, error)
+	GetByNameAndScope(ctx context.Context, scopeType model.ScopeType, scopeID uuid.UUID, name string) (*model.Role, error)
 }

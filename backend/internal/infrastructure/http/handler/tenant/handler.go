@@ -22,6 +22,7 @@ type Handler struct {
 	createWorkspaceUC  *usecase.CreateWorkspaceUseCase
 	listWorkspacesUC   *usecase.ListWorkspacesUseCase
 	updateWorkspaceUC  *usecase.UpdateWorkspaceUseCase
+	manageOrgUC        *usecase.ManageOrgUseCase
 	orgRepo            repository.OrgRepository
 	appRepo            repository.AppRepository
 }
@@ -34,6 +35,7 @@ func NewHandler(
 	createWorkspaceUC *usecase.CreateWorkspaceUseCase,
 	listWorkspacesUC *usecase.ListWorkspacesUseCase,
 	updateWorkspaceUC *usecase.UpdateWorkspaceUseCase,
+	manageOrgUC *usecase.ManageOrgUseCase,
 	orgRepo repository.OrgRepository,
 	appRepo repository.AppRepository,
 ) *Handler {
@@ -44,9 +46,44 @@ func NewHandler(
 		createWorkspaceUC: createWorkspaceUC,
 		listWorkspacesUC:  listWorkspacesUC,
 		updateWorkspaceUC: updateWorkspaceUC,
+		manageOrgUC:       manageOrgUC,
 		orgRepo:           orgRepo,
 		appRepo:           appRepo,
 	}
+}
+
+// UpdateOrg handles PATCH /organizations/{orgId}.
+func (h *Handler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "orgId"))
+	if err != nil {
+		response.JSON(w, http.StatusBadRequest, map[string]string{"error": "invalid org id"})
+		return
+	}
+	var req dto.UpdateOrgRequest
+	if err := validator.DecodeAndValidate(r, &req); err != nil {
+		response.JSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	org, err := h.manageOrgUC.Update(r.Context(), id, req)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, org)
+}
+
+// DeleteOrg handles DELETE /organizations/{orgId}.
+func (h *Handler) DeleteOrg(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "orgId"))
+	if err != nil {
+		response.JSON(w, http.StatusBadRequest, map[string]string{"error": "invalid org id"})
+		return
+	}
+	if err := h.manageOrgUC.Delete(r.Context(), id); err != nil {
+		response.Error(w, err)
+		return
+	}
+	response.NoContent(w)
 }
 
 // CreateOrg handles organization creation.
